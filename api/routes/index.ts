@@ -11,6 +11,8 @@ import bills from '../controllers/bills.js';
 import settings from '../controllers/settings.js';
 import reports from '../controllers/reports.js';
 import users from '../controllers/users.js';
+import queue from '../controllers/queue.js';
+import members from '../controllers/members.js';
 
 export function registerRoutes(app: { use: (path: string, router: Router) => void }): void {
   app.use('/api/auth', auth);
@@ -25,4 +27,6 @@ export function registerRoutes(app: { use: (path: string, router: Router) => voi
   app.use('/api/settings', settings);
   app.use('/api/reports', reports);
   app.use('/api/users', users);
+  app.use('/api/queue', queue);
+  app.use('/api/members', members);
 }

@@ -3,7 +3,13 @@ import { getDb } from '../utils/db.js';
 import { SessionService } from './SessionService.js';
 import { PricingService } from './PricingService.js';
 import { InventoryService } from './InventoryService.js';
-import type { Bill, Session, Rental, Goods } from '../../shared/api-types.js';
+import type { Bill, Session, Rental, Goods, Member as M } from '../../shared/api-types.js';
+import { markCouponUsed, incrementMemberStats, findMemberByPhone } from '../controllers/members.js';
+
+type MappedMember = {
+  id: number; name: string; phone: string; level: M.Level;
+  totalSpend: number; totalVisits: number;
+};
 
 const BILL_COLUMNS = [
   'id', 'bill_no', 'session_id', 'room_id', 'customer_name',
@@ -181,7 +187,80 @@ export class BillService {
         );
       }
 
-      return this.getBill(billId)!;
+      let member: MappedMember | null = null;
+      if (req.memberId) {
+        const mRow = this.db.prepare('SELECT * FROM member WHERE id = ?').get(req.memberId) as any;
+        if (mRow) {
+          member = {
+            id: mRow.id, name: mRow.name, phone: mRow.phone,
+            level: mRow.level, totalSpend: mRow.total_spend, totalVisits: mRow.total_visits,
+          };
+        }
+        incrementMemberStats(req.memberId, totals.totalAmount);
+      } else if (completedSession.customerPhone) {
+        const mByPhone = findMemberByPhone(completedSession.customerPhone);
+        if (mByPhone) {
+          member = {
+            id: mByPhone.id, name: mByPhone.name, phone: mByPhone.phone,
+            level: mByPhone.level, totalSpend: mByPhone.totalSpend, totalVisits: mByPhone.totalVisits,
+          };
+          incrementMemberStats(mByPhone.id, totals.totalAmount);
+        }
+      }
+
+      if (req.useMemberCouponId) {
+        markCouponUsed(req.useMemberCouponId);
+      }
+
+      const now = dayjs().format('YYYY-MM-DD HH:mm:ss');
+      this.db.prepare(`
+        UPDATE waiting_queue
+        SET status = 'skipped'
+        WHERE status = 'calling' AND called_expire_at < ?
+      `).run(now);
+
+      const nextRow = this.db.prepare(`
+        SELECT * FROM waiting_queue
+        WHERE status = 'waiting'
+        ORDER BY created_at ASC
+        LIMIT 1
+      `).get() as any;
+
+      let calledWaiting: any = null;
+      if (nextRow) {
+        const calledAt = dayjs();
+        const calledExpireAt = calledAt.add(15, 'minute');
+        this.db.prepare(`
+          UPDATE waiting_queue
+          SET status = 'calling', called_at = ?, called_expire_at = ?, assigned_room_id = ?
+          WHERE id = ?
+        `).run(
+          calledAt.format('YYYY-MM-DD HH:mm:ss'),
+          calledExpireAt.format('YYYY-MM-DD HH:mm:ss'),
+          completedSession.roomId,
+          nextRow.id,
+        );
+        const refreshed = this.db.prepare(`
+          SELECT wq.*, r.name as room_name
+          FROM waiting_queue wq
+          LEFT JOIN room r ON wq.assigned_room_id = r.id
+          WHERE wq.id = ?
+        `).get(nextRow.id) as Record<string, any>;
+        calledWaiting = {
+          id: refreshed.id,
+          customerName: refreshed.customer_name,
+          customerPhone: refreshed.customer_phone,
+          peopleCount: refreshed.people_count,
+          status: refreshed.status,
+          queueNumber: refreshed.queue_number,
+          assignedRoomName: refreshed.room_name,
+          calledAt: refreshed.called_at,
+          calledExpireAt: refreshed.called_expire_at,
+        };
+      }
+
+      const bill = this.getBill(billId)!;
+      return { ...bill, _calledWaiting: calledWaiting, _member: member } as any;
     })();
   }
 

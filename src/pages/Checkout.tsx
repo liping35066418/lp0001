@@ -20,8 +20,16 @@ import {
   ArrowLeft,
   Calculator,
   Minus,
+  Search,
+  Crown,
+  Ticket,
+  Bell,
+  Phone,
+  Users,
+  X,
 } from 'lucide-react';
-import type { Session as SS, Bill as BL, Rental as RT } from '../../shared/api-types';
+import type { Session as SS, Bill as BL, Rental as RT, Queue as Q } from '../../shared/api-types';
+import { Member as M } from '../../shared/api-types';
 import { get, post } from '@/utils/api';
 import { useUIStore } from '@/store/ui';
 import {
@@ -31,6 +39,9 @@ import {
   cnStatusPay,
 } from '@/utils/format';
 import { cn } from '@/lib/utils';
+import dayjs from 'dayjs';
+import Modal from '@/components/common/Modal';
+import CallingNotification from '@/components/dashboard/CallingNotification';
 
 type PayMethod = BL.PayMethod;
 
@@ -100,6 +111,76 @@ export default function Checkout() {
 
   const [billResult, setBillResult] = useState<BL.Bill | null>(null);
 
+  const [memberPhone, setMemberPhone] = useState('');
+  const [memberQuerying, setMemberQuerying] = useState(false);
+  const [memberData, setMemberData] = useState<M.MemberDiscountResp | null>(null);
+  const [selectedCouponId, setSelectedCouponId] = useState<number | undefined>(undefined);
+  const [useBestDeal, setUseBestDeal] = useState(true);
+  const [calledWaiting, setCalledWaiting] = useState<any>(null);
+
+  const subtotal = useMemo(() => {
+    if (!session) return 0;
+    return (
+      session.roomFee +
+      session.overtimeFee +
+      session.rentalFee +
+      session.goodsFee
+    );
+  }, [session]);
+
+  const discountInfo = useMemo(() => {
+    if (!memberData?.member || (!useBestDeal && selectedCouponId === undefined)) {
+      return { type: 'manual', amount: discountAmount, description: '手动优惠' } as const;
+    }
+    const md = memberData;
+    const rateTxt = md.levelDiscountRate < 1
+      ? `${Math.round(md.levelDiscountRate * 10)}折`
+      : '无折扣';
+    if (useBestDeal) {
+      if (md.bestDiscountType === 'level') {
+        return {
+          type: 'level' as const,
+          amount: md.levelDiscountAmount,
+          rate: md.levelDiscountRate,
+          description: `${M.LEVEL_NAME[md.member.level]}会员${rateTxt}`,
+          memberId: md.member.id,
+        };
+      }
+      if (md.bestDiscountType === 'coupon') {
+        const cp = md.availableCoupons.find((c) => c.memberCouponId === md.bestCouponId);
+        return {
+          type: 'coupon' as const,
+          amount: md.bestDiscountAmount,
+          description: `优惠券：${cp?.name || '会员券'}`,
+          memberId: md.member.id,
+          couponId: md.bestCouponId,
+        };
+      }
+    }
+    if (selectedCouponId !== undefined) {
+      const cp = md.availableCoupons.find((c) => c.memberCouponId === selectedCouponId);
+      const couponDiscount = cp
+        ? cp.type === 'fixed'
+          ? cp.value
+          : Number((subtotal * (1 - cp.value / 100)).toFixed(2))
+        : 0;
+      return {
+        type: 'coupon' as const,
+        amount: Number(couponDiscount),
+        description: `优惠券：${cp?.name}`,
+        memberId: md.member.id,
+        couponId: cp?.memberCouponId,
+      };
+    }
+    return {
+      type: 'level' as const,
+      amount: md.levelDiscountAmount,
+      rate: md.levelDiscountRate,
+      description: `${M.LEVEL_NAME[md.member.level]}会员${rateTxt}`,
+      memberId: md.member.id,
+    };
+  }, [memberData, useBestDeal, selectedCouponId, discountAmount, subtotal]);
+
   useEffect(() => {
     const init = async () => {
       if (!sessionId) return;
@@ -108,6 +189,10 @@ export default function Checkout() {
       try {
         const data = await get<SS.SessionDetail>(`/sessions/${sessionId}`);
         setSession(data);
+        if (data.customerPhone) {
+          setMemberPhone(data.customerPhone);
+          queryMember(data.customerPhone);
+        }
         const room = await get<{ basePrice: number }>(`/rooms/${data.roomId}`).catch(() => ({
           basePrice: 0,
         }));
@@ -120,17 +205,43 @@ export default function Checkout() {
       }
     };
     init();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
-  const subtotal = useMemo(() => {
-    if (!session) return 0;
-    return (
-      session.roomFee +
-      session.overtimeFee +
-      session.rentalFee +
-      session.goodsFee
-    );
-  }, [session]);
+  const queryMember = async (phone?: string) => {
+    const p = (phone ?? memberPhone).trim();
+    if (!p) {
+      setMemberData(null);
+      return;
+    }
+    setMemberQuerying(true);
+    try {
+      const data = await post<M.MemberDiscountResp>('/members/query-discount', {
+        phone: p,
+        subtotal: Number(subtotal),
+      });
+      setMemberData(data);
+      if (data.member) {
+        pushToast(
+          `识别为${M.LEVEL_NAME[data.member.level]} · 已为您计算最优优惠`,
+          'success',
+        );
+      }
+    } catch (e) {
+      pushToast((e as Error).message || '会员查询失败', 'error');
+    } finally {
+      setMemberQuerying(false);
+    }
+  };
+
+  useEffect(() => {
+    if (memberData && discountInfo.type !== 'manual') {
+      const amt = Number(discountInfo.amount.toFixed(2));
+      if (Math.abs(amt - discountAmount) > 0.01) {
+        setDiscountAmount(amt);
+      }
+    }
+  }, [discountInfo, memberData, discountAmount]);
 
   const totalAmount = useMemo(() => {
     return Math.max(0, Number((subtotal - discountAmount).toFixed(2)));
@@ -204,14 +315,30 @@ export default function Checkout() {
     setSubmitting(true);
     pushLoading();
     try {
-      const bill = await post<BL.Bill>('/bills/checkout', {
+      const payload: any = {
         sessionId: session.id,
         discountAmount: Number(discountAmount),
         payMethod,
         paidAmount: Number(paidAmount),
-      });
+        discountInfo: {
+          type: discountInfo.type,
+          description: discountInfo.description,
+          couponId: (discountInfo as any).couponId,
+        },
+      };
+      if ((discountInfo as any).memberId !== undefined) {
+        payload.memberId = (discountInfo as any).memberId;
+      }
+      if ((discountInfo as any).couponId !== undefined) {
+        payload.useMemberCouponId = (discountInfo as any).couponId;
+      }
+
+      const bill: any = await post<BL.Bill>('/bills/checkout', payload);
       (bill as BL.Bill & { _depositRefund?: number })._depositRefund = depositRefund;
       setBillResult(bill);
+      if (bill._calledWaiting) {
+        setCalledWaiting(bill._calledWaiting);
+      }
       pushToast('结账成功', 'success');
     } catch (e) {
       pushToast((e as Error).message, 'error');
@@ -248,6 +375,17 @@ export default function Checkout() {
   if (billResult) {
     const br = billResult as BL.Bill & { _depositRefund?: number };
     return (
+      <>
+        {calledWaiting && (
+          <CallingNotification
+            item={calledWaiting}
+            onClose={() => setCalledWaiting(null)}
+            onOpenRoom={() => {
+              setCalledWaiting(null);
+              navigate('/sessions');
+            }}
+          />
+        )}
       <div className="space-y-6 animate-fade-in max-w-3xl mx-auto print:max-w-none">
         <div className="card p-8 print:shadow-none print:border print:border-black">
           <div className="text-center border-b border-dashed border-slate-300 pb-6 mb-6">
@@ -412,6 +550,7 @@ export default function Checkout() {
           </button>
         </div>
       </div>
+      </>
     );
   }
 
@@ -749,6 +888,198 @@ export default function Checkout() {
             </h3>
 
             <div>
+              <label className="label">会员手机号</label>
+              <div className="flex gap-2">
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <input
+                    type="text"
+                    value={memberPhone}
+                    onChange={(e) => setMemberPhone(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        queryMember();
+                      }
+                    }}
+                    placeholder="输入手机号识别会员"
+                    className="input pl-9"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => queryMember()}
+                  disabled={memberQuerying}
+                  className="btn-outline px-4"
+                >
+                  {memberQuerying ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Search className="w-4 h-4" />
+                  )}
+                  查询
+                </button>
+              </div>
+            </div>
+
+            {memberData?.member && (
+              <div className="rounded-xl overflow-hidden shadow-sm">
+                <div className="bg-gradient-to-br from-amber-400 via-orange-400 to-rose-400 p-4 text-white">
+                  <div className="flex items-start gap-3">
+                    <div className="w-12 h-12 rounded-xl bg-white/20 backdrop-blur flex items-center justify-center shrink-0">
+                      <Crown className="w-6 h-6" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-bold text-base">{memberData.member.name}</span>
+                        <span className={cn(
+                          'badge text-xs',
+                          memberData.member.level === 'diamond' && 'bg-cyan-200/30 text-white border border-white/30',
+                          memberData.member.level === 'gold' && 'bg-yellow-200/30 text-white border border-white/30',
+                          memberData.member.level === 'silver' && 'bg-slate-200/30 text-white border border-white/30',
+                          memberData.member.level === 'normal' && 'bg-white/20 text-white border border-white/30',
+                        )}>
+                          {M.LEVEL_NAME[memberData.member.level]}
+                        </span>
+                      </div>
+                      <div className="mt-1.5 text-xs text-white/90 space-y-0.5">
+                        <div className="flex items-center gap-1">
+                          <Phone className="w-3 h-3" />
+                          {memberData.member.phone}
+                        </div>
+                        <div>
+                          累计到店 {memberData.member.totalVisits} 次 · 累计消费 {formatMoney(memberData.member.totalSpend)}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    <div className="bg-white/15 backdrop-blur rounded-lg p-2.5 border border-white/20">
+                      <div className="text-[11px] text-white/80">等级折扣</div>
+                      <div className="font-bold text-sm mt-0.5">
+                        {memberData.levelDiscountRate < 1
+                          ? `${Math.round(memberData.levelDiscountRate * 10)}折 省${formatMoney(memberData.levelDiscountAmount)}`
+                          : '无折扣'
+                        }
+                      </div>
+                    </div>
+                    <div className="bg-white/15 backdrop-blur rounded-lg p-2.5 border border-white/20">
+                      <div className="text-[11px] text-white/80 flex items-center gap-1">
+                        <Ticket className="w-3 h-3" />
+                        可用券
+                      </div>
+                      <div className="font-bold text-sm mt-0.5">
+                        {memberData.availableCoupons.length} 张
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {memberData?.member && memberData.availableCoupons.length > 0 && (
+              <div className="space-y-2">
+                <label className="label !mb-1">可用优惠券</label>
+                <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
+                  {memberData.availableCoupons.map((cp) => {
+                    const isBest = useBestDeal && memberData.bestDiscountType === 'coupon' && memberData.bestCouponId === cp.memberCouponId;
+                    const isSelected = (!useBestDeal && selectedCouponId === cp.memberCouponId) || isBest;
+                    const couponDiscount = cp.type === 'fixed'
+                      ? cp.value
+                      : Number((subtotal * (1 - cp.value / 100)).toFixed(2));
+                    const gradients = [
+                      'from-rose-500 to-pink-500',
+                      'from-violet-500 to-purple-500',
+                      'from-sky-500 to-blue-500',
+                      'from-emerald-500 to-teal-500',
+                      'from-amber-500 to-orange-500',
+                    ];
+                    const gradient = gradients[cp.memberCouponId % gradients.length];
+                    return (
+                      <label
+                        key={cp.memberCouponId}
+                        className={cn(
+                          'block relative rounded-xl overflow-hidden cursor-pointer transition-all border-2',
+                          isSelected
+                            ? 'border-primary-500 shadow-md ring-2 ring-primary-100'
+                            : 'border-transparent hover:border-slate-200'
+                        )}
+                      >
+                        <input
+                          type="checkbox"
+                          className="sr-only"
+                          checked={isSelected}
+                          onChange={() => {
+                            setUseBestDeal(false);
+                            setSelectedCouponId(
+                              selectedCouponId === cp.memberCouponId
+                                ? undefined
+                                : cp.memberCouponId
+                            );
+                          }}
+                        />
+                        <div className={cn('flex bg-gradient-to-r', gradient)}>
+                          <div className="w-20 shrink-0 flex flex-col items-center justify-center text-white py-3 relative">
+                            <div className="absolute left-0 top-0 bottom-0 w-[1px] bg-[repeating-linear-gradient(to_bottom,white_0,white_4px,transparent_4px,transparent_8px)] opacity-60" />
+                            <div className="text-2xl font-bold leading-none">
+                              {cp.type === 'fixed' ? (
+                                <>¥{cp.value}</>
+                              ) : (
+                                <>{cp.value}<span className="text-lg">折</span></>
+                              )}
+                            </div>
+                            {cp.minAmount > 0 && (
+                              <div className="text-[10px] opacity-80 mt-1">
+                                满{formatMoney(cp.minAmount)}可用
+                              </div>
+                            )}
+                          </div>
+                          <div className="flex-1 bg-white p-3">
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="flex-1 min-w-0">
+                                <div className="font-semibold text-sm text-slate-800 truncate">
+                                  {cp.name}
+                                </div>
+                                <div className="text-[11px] text-slate-400 mt-0.5">
+                                  有效期至 {dayjs(cp.expireAt).format('YYYY.MM.DD')}
+                                </div>
+                                <div className="text-[11px] text-rose-600 mt-1 font-medium">
+                                  预计省 {formatMoney(couponDiscount)}
+                                </div>
+                              </div>
+                              {isBest && (
+                                <span className="badge bg-rose-100 text-rose-700 text-[10px] shrink-0">
+                                  最优
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                        {isSelected && (
+                          <div className="absolute top-2 right-2 w-5 h-5 rounded-full bg-primary-500 flex items-center justify-center">
+                            <CheckCircle2 className="w-4 h-4 text-white" />
+                          </div>
+                        )}
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {memberData?.member && discountInfo.amount > 0 && discountInfo.type !== 'manual' && (
+              <div className="p-3 bg-gradient-to-r from-emerald-50 to-green-50 border border-emerald-200 rounded-xl flex items-center justify-between">
+                <span className="text-sm font-medium text-emerald-700 flex items-center gap-1.5">
+                  <CheckCircle2 className="w-4 h-4" />
+                  预计共省
+                </span>
+                <span className="text-lg font-bold text-emerald-700">
+                  {formatMoney(discountInfo.amount)}
+                </span>
+              </div>
+            )}
+
+            <div>
               <label className="label">优惠减免</label>
               <div className="relative">
                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">
@@ -761,33 +1092,55 @@ export default function Checkout() {
                   step={1}
                   value={discountAmount}
                   onChange={(e) => handleDiscountChange(Number(e.target.value))}
+                  readOnly={discountInfo.type !== 'manual'}
                   className={cn(
-                    'input pl-7 text-lg font-semibold',
+                    'input pl-7 text-lg font-semibold pr-24',
+                    discountInfo.type !== 'manual' && 'bg-primary-50 border-primary-200 focus:ring-primary-200',
                     errors.discountAmount &&
                       'border-red-500 focus:ring-red-500'
                   )}
                 />
+                {discountInfo.type !== 'manual' && (
+                  <div className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-primary-600 font-medium max-w-[80px] truncate text-right">
+                    {discountInfo.description}
+                  </div>
+                )}
               </div>
-              <div className="mt-2 flex gap-1.5 flex-wrap">
-                {[10, 20, 50, subtotal * 0.1, subtotal * 0.2]
-                  .map((v) => Math.round(v * 100) / 100)
-                  .filter((v) => v > 0 && v <= subtotal)
-                  .map((v, i) => (
-                    <button
-                      key={i}
-                      type="button"
-                      onClick={() => handleDiscountChange(v)}
-                      className={cn(
-                        'px-2.5 py-1 rounded-lg text-xs font-medium transition-colors border',
-                        discountAmount === v
-                          ? 'border-primary-500 bg-primary-50 text-primary-700'
-                          : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-                      )}
-                    >
-                      -{formatMoney(v)}
-                    </button>
-                  ))}
-              </div>
+              {discountInfo.type !== 'manual' ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setUseBestDeal(false);
+                    setSelectedCouponId(undefined);
+                    setMemberData(null);
+                  }}
+                  className="mt-2 flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-700 transition-colors"
+                >
+                  <X className="w-3.5 h-3.5" />
+                  切换为手动优惠
+                </button>
+              ) : (
+                <div className="mt-2 flex gap-1.5 flex-wrap">
+                  {[10, 20, 50, subtotal * 0.1, subtotal * 0.2]
+                    .map((v) => Math.round(v * 100) / 100)
+                    .filter((v) => v > 0 && v <= subtotal)
+                    .map((v, i) => (
+                      <button
+                        key={i}
+                        type="button"
+                        onClick={() => handleDiscountChange(v)}
+                        className={cn(
+                          'px-2.5 py-1 rounded-lg text-xs font-medium transition-colors border',
+                          discountAmount === v
+                            ? 'border-primary-500 bg-primary-50 text-primary-700'
+                            : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                        )}
+                      >
+                        -{formatMoney(v)}
+                      </button>
+                    ))}
+                </div>
+              )}
               {errors.discountAmount && (
                 <p className="mt-1 text-xs text-red-500 flex items-center gap-1">
                   <AlertCircle className="w-3 h-3" />

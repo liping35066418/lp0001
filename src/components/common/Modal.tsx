@@ -2,7 +2,7 @@ import { X } from 'lucide-react';
 
 interface ModalProps {
   open: boolean;
-  title: string;
+  title?: string;
   onClose: () => void;
   children: React.ReactNode;
   footer?: React.ReactNode;
@@ -32,16 +32,18 @@ export default function Modal({
         className={`modal ${sizeMap[size]}`}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="modal-header">
-          <h3 className="text-lg font-semibold text-slate-800">{title}</h3>
-          <button
-            onClick={onClose}
-            className="p-1 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-        <div className="modal-body">{children}</div>
+        {title !== undefined && (
+          <div className="modal-header">
+            <h3 className="text-lg font-semibold text-slate-800">{title}</h3>
+            <button
+              onClick={onClose}
+              className="p-1 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+        )}
+        <div className={title !== undefined ? 'modal-body' : 'p-2'}>{children}</div>
         {footer && <div className="modal-footer">{footer}</div>}
       </div>
     </div>

@@ -150,6 +150,13 @@ export namespace Bill {
   export interface CheckoutReq {
     sessionId: number; discountAmount: number;
     payMethod: PayMethod; paidAmount: number;
+    memberId?: number;
+    useMemberCouponId?: number;
+    discountInfo?: {
+      type: 'none' | 'level' | 'coupon';
+      description?: string;
+      couponId?: number;
+    };
   }
 }
 
@@ -203,4 +210,91 @@ export namespace User {
     phone?: string; status?: 'active' | 'disabled';
   }
   export interface ResetPwdReq { userId: number; newPassword: string; }
+}
+
+export namespace Queue {
+  export type Status = 'waiting' | 'calling' | 'skipped' | 'seated' | 'cancelled';
+  export type RoomSpec = 'small' | 'medium' | 'large' | 'vip';
+  export interface WaitingItem {
+    id: number;
+    customerName: string;
+    customerPhone: string;
+    peopleCount: number;
+    status: Status;
+    queueNumber: number;
+    roomSpec?: RoomSpec;
+    assignedRoomId?: number;
+    assignedRoomName?: string;
+    calledAt?: string;
+    calledExpireAt?: string;
+    sessionId?: number;
+    createdBy?: number;
+    createdAt: string;
+  }
+  export interface JoinQueueReq {
+    customerName: string;
+    customerPhone: string;
+    peopleCount: number;
+    roomSpec?: RoomSpec;
+  }
+  export interface QueueSummary {
+    waitingCount: number;
+    callingCount: number;
+    totalToday: number;
+    list: WaitingItem[];
+  }
+}
+
+export namespace Member {
+  export type Level = 'normal' | 'silver' | 'gold' | 'diamond';
+  export const LEVEL_DISCOUNT: Record<Level, number> = {
+    normal: 0.95,
+    silver: 0.90,
+    gold: 0.85,
+    diamond: 0.80,
+  };
+  export const LEVEL_NAME: Record<Level, string> = {
+    normal: '普通会员',
+    silver: '银卡会员',
+    gold: '金卡会员',
+    diamond: '钻石会员',
+  };
+  export interface Member {
+    id: number;
+    name: string;
+    phone: string;
+    level: Level;
+    totalSpend: number;
+    totalVisits: number;
+    remark?: string;
+    createdAt: string;
+  }
+  export interface AvailableCoupon {
+    id: number;
+    memberCouponId: number;
+    name: string;
+    type: 'percent' | 'fixed';
+    value: number;
+    minAmount: number;
+    description?: string;
+    expireAt: string;
+  }
+  export interface MemberDiscountResp {
+    member?: Member;
+    levelDiscountRate: number;
+    levelDiscountAmount: number;
+    availableCoupons: AvailableCoupon[];
+    bestDiscountAmount: number;
+    bestDiscountType: 'none' | 'level' | 'coupon';
+    bestCouponId?: number;
+  }
+  export interface QueryMemberReq {
+    phone: string;
+    subtotal: number;
+  }
+  export interface ApplyDiscountReq {
+    memberId?: number;
+    subtotal: number;
+    useMemberCouponId?: number;
+  }
 }

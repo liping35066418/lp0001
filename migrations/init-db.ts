@@ -3,6 +3,7 @@ dotenv.config({ path: '.env.local' });
 
 import { getDb } from '../api/utils/db.js';
 import bcrypt from 'bcryptjs';
+import dayjs from 'dayjs';
 
 const DDL = `
 CREATE TABLE IF NOT EXISTS user (
@@ -195,6 +196,60 @@ CREATE TABLE IF NOT EXISTS operation_log (
 );
 CREATE INDEX IF NOT EXISTS idx_log_user ON operation_log(user_id);
 CREATE INDEX IF NOT EXISTS idx_log_time ON operation_log(created_at);
+
+CREATE TABLE IF NOT EXISTS waiting_queue (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    customer_name TEXT NOT NULL,
+    customer_phone TEXT NOT NULL,
+    people_count INTEGER NOT NULL DEFAULT 1,
+    status TEXT NOT NULL CHECK (status IN ('waiting','calling','skipped','seated','cancelled')) DEFAULT 'waiting',
+    queue_number INTEGER NOT NULL DEFAULT 0,
+    room_spec TEXT CHECK (room_spec IN ('small','medium','large','vip')),
+    assigned_room_id INTEGER REFERENCES room(id),
+    called_at TEXT,
+    called_expire_at TEXT,
+    session_id INTEGER REFERENCES session(id),
+    created_by INTEGER REFERENCES user(id),
+    created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_queue_status ON waiting_queue(status);
+CREATE INDEX IF NOT EXISTS idx_queue_created ON waiting_queue(created_at);
+
+CREATE TABLE IF NOT EXISTS member (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    phone TEXT NOT NULL UNIQUE,
+    level TEXT NOT NULL CHECK (level IN ('normal','silver','gold','diamond')) DEFAULT 'normal',
+    total_spend REAL NOT NULL DEFAULT 0,
+    total_visits INTEGER NOT NULL DEFAULT 0,
+    remark TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_member_phone ON member(phone);
+
+CREATE TABLE IF NOT EXISTS coupon (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    type TEXT NOT NULL CHECK (type IN ('percent','fixed')) DEFAULT 'fixed',
+    value REAL NOT NULL DEFAULT 0,
+    min_amount REAL NOT NULL DEFAULT 0,
+    member_level TEXT CHECK (member_level IN ('normal','silver','gold','diamond')),
+    expire_days INTEGER NOT NULL DEFAULT 30,
+    status TEXT NOT NULL CHECK (status IN ('active','inactive')) DEFAULT 'active',
+    description TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+
+CREATE TABLE IF NOT EXISTS member_coupon (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    member_id INTEGER NOT NULL REFERENCES member(id),
+    coupon_id INTEGER NOT NULL REFERENCES coupon(id),
+    status TEXT NOT NULL CHECK (status IN ('unused','used','expired')) DEFAULT 'unused',
+    used_at TEXT,
+    expire_at TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_member_coupon_member ON member_coupon(member_id, status);
 `;
 
 const DEFAULT_PRICING = JSON.stringify({
@@ -265,6 +320,31 @@ function init(): void {
   bgStmt.run('大富翁经典版', '亲子', 'easy', 2, 6, 90, '棋盘x1,棋子x6,骰子x2,地契卡x28,钱币套装x1', 120, 20, 2, 2);
   bgStmt.run('展翅翱翔', '策略', 'hard', 1, 5, 60, '主版图x1,鸟类卡x170,蛋x100,食物tokenx50', 350, 50, 1, 1);
   console.log('[DB] 示例桌游创建完成');
+
+  const memberStmt = db.prepare(`INSERT OR IGNORE INTO member (name, phone, level, total_spend, total_visits, remark) VALUES (?, ?, ?, ?, ?, ?)`);
+  memberStmt.run('张三', '13800138000', 'diamond', 8860.5, 42, 'VIP钻石会员，经常来');
+  memberStmt.run('李四', '13900139000', 'gold', 3280, 18, '金卡会员');
+  memberStmt.run('王五', '13700137000', 'silver', 1560, 8, '银卡会员');
+  memberStmt.run('赵六', '13600136000', 'normal', 320, 3, '普通会员');
+  console.log('[DB] 示例会员创建完成');
+
+  const couponStmt = db.prepare(`INSERT OR IGNORE INTO coupon (name, type, value, min_amount, member_level, expire_days, status, description) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
+  couponStmt.run('新客满100减20', 'fixed', 20, 100, null, 90, 'active', '首次到店消费满100元可用');
+  couponStmt.run('银卡专属9折券', 'percent', 90, 0, 'silver', 30, 'active', '银卡及以上会员专属9折');
+  couponStmt.run('金卡满200减50', 'fixed', 50, 200, 'gold', 30, 'active', '金卡及以上会员满200减50');
+  couponStmt.run('钻石专属8折', 'percent', 80, 0, 'diamond', 60, 'active', '钻石会员专属8折券');
+  couponStmt.run('包厢时长立减30', 'fixed', 30, 0, null, 30, 'active', '全场通用，包厢时长立减30');
+  console.log('[DB] 示例优惠券创建完成');
+
+  const mcStmt = db.prepare(`INSERT OR IGNORE INTO member_coupon (member_id, coupon_id, status, expire_at) VALUES (?, ?, 'unused', ?)`);
+  const now = dayjs();
+  mcStmt.run(1, 4, now.add(60, 'day').format('YYYY-MM-DD HH:mm:ss'));
+  mcStmt.run(1, 5, now.add(30, 'day').format('YYYY-MM-DD HH:mm:ss'));
+  mcStmt.run(2, 3, now.add(30, 'day').format('YYYY-MM-DD HH:mm:ss'));
+  mcStmt.run(2, 5, now.add(30, 'day').format('YYYY-MM-DD HH:mm:ss'));
+  mcStmt.run(3, 2, now.add(30, 'day').format('YYYY-MM-DD HH:mm:ss'));
+  mcStmt.run(4, 1, now.add(90, 'day').format('YYYY-MM-DD HH:mm:ss'));
+  console.log('[DB] 会员优惠券示例创建完成');
 
   const settingStmt = db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)`);
   settingStmt.run('pricing_rule', DEFAULT_PRICING);
