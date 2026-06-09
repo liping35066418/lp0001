@@ -1,0 +1,6 @@
+{
+  "watch": ["api", "shared"],
+  "ext": "ts,json",
+  "ignore": ["node_modules", "dist", "src", "public"],
+  "exec": "node --import tsx --no-warnings ./api/server.ts"
+}
