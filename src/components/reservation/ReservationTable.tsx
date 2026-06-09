@@ -40,11 +40,16 @@ export default function ReservationTable({
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [showId, setShowId] = useState(false);
 
+  const list = data?.list ?? [];
+  const total = data?.total ?? 0;
+  const page = data?.page ?? 1;
+  const pageSize = data?.pageSize ?? 10;
+
   const toggleAll = () => {
-    if (selectedIds.size === data.list.length) {
+    if (selectedIds.size === list.length) {
       setSelectedIds(new Set());
     } else {
-      setSelectedIds(new Set(data.list.map((r) => r.id)));
+      setSelectedIds(new Set(list.map((r) => r.id)));
     }
   };
 
@@ -87,7 +92,7 @@ export default function ReservationTable({
                   onClick={toggleAll}
                   className="text-slate-400 hover:text-primary-600"
                 >
-                  {selectedIds.size === data.list.length && data.list.length > 0 ? (
+                  {selectedIds.size === list.length && list.length > 0 ? (
                     <CheckSquare size={16} className="text-primary-600" />
                   ) : (
                     <Square size={16} />
@@ -107,7 +112,7 @@ export default function ReservationTable({
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {data.list.length === 0 ? (
+            {list.length === 0 ? (
               <tr>
                 <td
                   colSpan={showId ? 11 : 10}
@@ -117,7 +122,7 @@ export default function ReservationTable({
                 </td>
               </tr>
             ) : (
-              data.list.map((r) => {
+              list.map((r) => {
                 const room = roomsMap[r.roomId];
                 return (
                   <tr
@@ -235,12 +240,12 @@ export default function ReservationTable({
 
       <div className="px-4 py-3 border-t border-slate-100 flex items-center justify-between">
         <span className="text-sm text-slate-500">
-          共 {data.total} 条记录
+          共 {total} 条记录
         </span>
         <div className="flex items-center gap-2">
           <select
             className="input !w-auto !py-1.5 text-sm"
-            value={data.pageSize}
+            value={pageSize}
             onChange={(e) => onPageChange(1, Number(e.target.value))}
           >
             {pageOptions.map((n) => (
@@ -250,9 +255,9 @@ export default function ReservationTable({
             ))}
           </select>
           <Pagination
-            page={data.page}
-            pageSize={data.pageSize}
-            total={data.total}
+            page={page}
+            pageSize={pageSize}
+            total={total}
             onChange={onPageChange}
           />
         </div>

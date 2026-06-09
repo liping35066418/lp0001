@@ -58,7 +58,37 @@ router.get('/active', async (req: Request, res: Response): Promise<void> => {
       WHERE s.status = 'active'
       ORDER BY s.start_at DESC
     `).all() as any[];
-    const list = rows.map(mapSessionWithExtras);
+    const list = rows.map((row) => {
+      const session = mapSessionWithExtras(row);
+      const goodsRows = sessionGoodsItemRepo.findBySession(row.id);
+      const goodsItems: Goods.GoodsItemInBill[] = goodsRows.map((g) => ({
+        id: g.id,
+        goodsId: g.goods_id,
+        name: g.goods_name,
+        quantity: g.quantity,
+        unitPrice: g.unit_price,
+        subtotal: g.subtotal,
+      }));
+      const rentalRows = db.prepare(`
+        SELECT rt.*, b.name as boardgame_name
+        FROM rental rt LEFT JOIN boardgame b ON rt.boardgame_id = b.id
+        WHERE rt.session_id = ?
+        ORDER BY rt.rented_at DESC
+      `).all(row.id) as any[];
+      const rentals: Rental.RentalInfo[] = rentalRows.map((r) => ({
+        id: r.id,
+        boardgameId: r.boardgame_id,
+        boardgameName: r.boardgame_name || `桌游#${r.boardgame_id}`,
+        rentalFee: r.rental_fee,
+        depositCollected: r.deposit_collected,
+        status: r.status as Rental.Status,
+      }));
+      return {
+        ...session,
+        goodsItems,
+        rentals,
+      } as Session.SessionDetail;
+    });
     ok(res, list);
   } catch (e) {
     fail(res, (e as Error).message);
@@ -191,14 +221,54 @@ router.post('/:id/add-goods', async (req: Request, res: Response): Promise<void>
   }
 });
 
-router.post('/:id/refresh', async (req: Request, res: Response): Promise<void> => {
+async function handleRefreshFees(req: Request, res: Response) {
   try {
     const id = Number(req.params.id);
-    const session = SessionService.refreshSessionCost(id);
-    ok(res, session, '刷新成功');
+    const refreshed = SessionService.refreshSessionCost(id);
+    const row = db.prepare(`
+      SELECT s.*, r.name as room_name
+      FROM session s LEFT JOIN room r ON s.room_id = r.id
+      WHERE s.id = ?
+    `).get(id) as any;
+    let detail: Session.SessionDetail | null = null;
+    if (row) {
+      const session = mapSessionWithExtras(row);
+      const goodsRows = sessionGoodsItemRepo.findBySession(id);
+      const goodsItems: Goods.GoodsItemInBill[] = goodsRows.map((g) => ({
+        id: g.id,
+        goodsId: g.goods_id,
+        name: g.goods_name,
+        quantity: g.quantity,
+        unitPrice: g.unit_price,
+        subtotal: g.subtotal,
+      }));
+      const rentalRows = db.prepare(`
+        SELECT rt.*, b.name as boardgame_name
+        FROM rental rt LEFT JOIN boardgame b ON rt.boardgame_id = b.id
+        WHERE rt.session_id = ?
+        ORDER BY rt.rented_at DESC
+      `).all(id) as any[];
+      const rentals: Rental.RentalInfo[] = rentalRows.map((r) => ({
+        id: r.id,
+        boardgameId: r.boardgame_id,
+        boardgameName: r.boardgame_name || `桌游#${r.boardgame_id}`,
+        rentalFee: r.rental_fee,
+        depositCollected: r.deposit_collected,
+        status: r.status as Rental.Status,
+      }));
+      detail = {
+        ...session,
+        goodsItems,
+        rentals,
+      };
+    }
+    ok(res, detail, '刷新成功');
   } catch (e) {
     fail(res, (e as Error).message);
   }
-});
+}
+
+router.post('/:id/refresh-fees', handleRefreshFees);
+router.post('/:id/refresh', handleRefreshFees);
 
 export default router;

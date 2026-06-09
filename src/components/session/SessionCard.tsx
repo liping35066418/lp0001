@@ -47,6 +47,8 @@ export default function SessionCard({
   }, []);
 
   const s = session;
+  const goodsItems = s?.goodsItems ?? [];
+  const rentals = s?.rentals ?? [];
   const startTime = dayjs(s.startAt);
   const scheduledEnd = dayjs(s.scheduledEndAt);
   const elapsed = now.diff(startTime, 'minute');
@@ -72,8 +74,8 @@ export default function SessionCard({
     </span>
   );
 
-  const goodsTotal = s.goodsItems.reduce((sum, g) => sum + g.subtotal, 0);
-  const rentalsTotal = s.rentals.reduce((sum, r) => sum + r.rentalFee, 0);
+  const goodsTotal = goodsItems.reduce((sum, g) => sum + g.subtotal, 0);
+  const rentalsTotal = rentals.reduce((sum, r) => sum + r.rentalFee, 0);
 
   return (
     <div
@@ -205,7 +207,7 @@ export default function SessionCard({
         </div>
       </div>
 
-      {(s.goodsItems.length > 0 || s.rentals.length > 0) && (
+      {(goodsItems.length > 0 || rentals.length > 0) && (
         <div className="px-5 border-t border-slate-100">
           <button
             onClick={() => setExpanded(!expanded)}
@@ -215,7 +217,7 @@ export default function SessionCard({
               <Package size={14} />
               消费明细
               <span className="badge bg-slate-100 text-slate-600">
-                商品 {s.goodsItems.length} · 租借 {s.rentals.length}
+                商品 {goodsItems.length} · 租借 {rentals.length}
               </span>
             </span>
             {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
@@ -223,14 +225,14 @@ export default function SessionCard({
 
           {expanded && (
             <div className="pb-4 space-y-4 animate-slide-up">
-              {s.goodsItems.length > 0 && (
+              {goodsItems.length > 0 && (
                 <div>
                   <h4 className="text-xs font-medium text-slate-500 mb-2 flex items-center gap-1.5">
                     <ShoppingCart size={12} />
                     商品明细
                   </h4>
                   <div className="bg-slate-50 rounded-lg p-3 space-y-1.5">
-                    {s.goodsItems.map((g) => (
+                    {goodsItems.map((g) => (
                       <div
                         key={g.id}
                         className="flex items-center justify-between text-sm"
@@ -249,14 +251,14 @@ export default function SessionCard({
                 </div>
               )}
 
-              {s.rentals.length > 0 && (
+              {rentals.length > 0 && (
                 <div>
                   <h4 className="text-xs font-medium text-slate-500 mb-2 flex items-center gap-1.5">
                     <Dice5 size={12} />
                     租借桌游
                   </h4>
                   <div className="bg-slate-50 rounded-lg p-3 space-y-1.5">
-                    {s.rentals.map((r) => (
+                    {rentals.map((r) => (
                       <div
                         key={r.id}
                         className="flex items-center justify-between text-sm"

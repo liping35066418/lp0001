@@ -265,20 +265,11 @@ export default function Dashboard() {
 
   const handleStartFromReservation = async (rv: Reservation.Reservation) => {
     try {
-      const hours = Math.max(
-        1,
-        dayjs(rv.endAt).diff(dayjs(rv.startAt), 'hour') || 2
+      await post<{ reservation: Reservation.Reservation; session: { id: number } }>(
+        `/reservations/${rv.id}/check-in`
       );
-      await post<Session.Session>('/sessions', {
-        roomId: rv.roomId,
-        reservationId: rv.id,
-        customerName: rv.customerName,
-        customerPhone: rv.customerPhone,
-        peopleCount: rv.peopleCount,
-        hours,
-      });
       pushToast('开台成功', 'success');
-      await fetchAll();
+      navigate('/sessions');
     } catch (e) {
       pushToast((e as Error).message || '开台失败', 'error');
     }

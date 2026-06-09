@@ -47,9 +47,9 @@ function findReservationWithRoomName(id: number): (ReturnType<typeof mapReservat
   return row ? mapReservation(row) : null;
 }
 
-router.get('/', async (req: Request, res: Response): Promise<void> => {
+router.get('/all', async (req: Request, res: Response): Promise<void> => {
   try {
-    const { date, roomId, status } = req.query;
+    const { date, roomId, status, keyword } = req.query;
     const conditions: string[] = ['1=1'];
     const params: unknown[] = [];
 
@@ -65,6 +65,10 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
       conditions.push('r.status = ?');
       params.push(status);
     }
+    if (keyword) {
+      conditions.push('(r.customer_name LIKE ? OR r.customer_phone LIKE ?)');
+      params.push(`%${keyword}%`, `%${keyword}%`);
+    }
 
     const rows = db.prepare(`
       SELECT r.*, rm.name as room_name
@@ -75,6 +79,61 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
 
     const list = rows.map(mapReservation);
     ok(res, list);
+  } catch (e) {
+    fail(res, (e as Error).message);
+  }
+});
+
+router.get('/', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { date, roomId, status, keyword, page, pageSize } = req.query;
+    const conditions: string[] = ['1=1'];
+    const params: unknown[] = [];
+
+    if (date) {
+      conditions.push('DATE(r.start_at) = ?');
+      params.push(date);
+    }
+    if (roomId) {
+      conditions.push('r.room_id = ?');
+      params.push(Number(roomId));
+    }
+    if (status) {
+      conditions.push('r.status = ?');
+      params.push(status);
+    }
+    if (keyword) {
+      conditions.push('(r.customer_name LIKE ? OR r.customer_phone LIKE ?)');
+      params.push(`%${keyword}%`, `%${keyword}%`);
+    }
+
+    const whereSql = conditions.join(' AND ');
+    const countRow = db.prepare(`
+      SELECT COUNT(*) as total
+      FROM reservation r LEFT JOIN room rm ON r.room_id = rm.id
+      WHERE ${whereSql}
+    `).get(...params) as { total: number };
+    const total = countRow.total;
+
+    const p = Number(page) || 1;
+    const ps = Number(pageSize) || 10;
+    const offset = (p - 1) * ps;
+
+    const rows = db.prepare(`
+      SELECT r.*, rm.name as room_name
+      FROM reservation r LEFT JOIN room rm ON r.room_id = rm.id
+      WHERE ${whereSql}
+      ORDER BY r.start_at DESC
+      LIMIT ? OFFSET ?
+    `).all(...params, ps, offset) as any[];
+
+    const list = rows.map(mapReservation);
+    ok(res, {
+      list,
+      total,
+      page: p,
+      pageSize: ps,
+    });
   } catch (e) {
     fail(res, (e as Error).message);
   }

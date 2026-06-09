@@ -176,9 +176,11 @@ export default function ReservationList() {
         navigate('/sessions');
         return;
       }
-      const session = await post<{ id: number }>(`/reservations/${r.id}/check-in`);
+      const result = await post<{ reservation: Reservation.Reservation; session: { id: number } }>(
+        `/reservations/${r.id}/check-in`
+      );
       pushToast('开台成功！', 'success');
-      navigate(`/checkout/${session.id}`);
+      navigate('/sessions');
     } catch (e) {
       pushToast((e as Error).message, 'error');
     }
